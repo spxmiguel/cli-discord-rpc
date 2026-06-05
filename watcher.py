@@ -10,6 +10,7 @@ import os
 import random
 import threading
 import platform
+import winreg
 from datetime import datetime
 
 try:
@@ -297,6 +298,8 @@ def main():
     menu = pystray.Menu(
         pystray.MenuItem(toggle_label, tray_toggle, default=True),
         pystray.Menu.SEPARATOR,
+        pystray.MenuItem(autostart_label, tray_autostart_toggle),
+        pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", tray_quit),
     )
     tray = pystray.Icon("CLI Watcher", icon_img, "CLI Watcher — iniciando...", menu)
@@ -306,5 +309,53 @@ def main():
     tray.run()  # bloqueia até sair
 
 
+def set_autostart(enable=True):
+    """Adiciona/remove do registro de inicialização do Windows."""
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    app_name = "CLIWatcher"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+        if enable:
+            exe_path = sys.executable if getattr(sys, "frozen", False) else f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
+        else:
+            try:
+                winreg.DeleteValue(key, app_name)
+            except FileNotFoundError:
+                pass
+        winreg.CloseKey(key)
+    except Exception as e:
+        log(f"autostart: {e}")
+
+
+def tray_autostart_toggle(icon, item):
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.QueryValueEx(key, "CLIWatcher")
+        winreg.CloseKey(key)
+        currently_on = True
+    except FileNotFoundError:
+        currently_on = False
+    set_autostart(not currently_on)
+    status = "ativado" if not currently_on else "desativado"
+    log(f"Iniciar com Windows: {status}")
+    icon.update_menu()
+
+
+def autostart_label(item):
+    key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path)
+        winreg.QueryValueEx(key, "CLIWatcher")
+        winreg.CloseKey(key)
+        return "Iniciar com Windows: ON"
+    except FileNotFoundError:
+        return "Iniciar com Windows: OFF"
+
+
 if __name__ == "__main__":
+    # Na primeira vez que roda como .exe, já ativa o autostart
+    if getattr(sys, "frozen", False):
+        set_autostart(True)
     main()
