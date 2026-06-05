@@ -177,7 +177,7 @@ def _update_rpc(details, key, friendly, start):
             details    = details,
             state      = random.choice(states),
             start      = start,
-            large_image= "https://i.imgur.com/wSTFkRM.png",
+            large_image= "codando",
             large_text = friendly,
         )
     except Exception:
