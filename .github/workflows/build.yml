@@ -1,0 +1,137 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build exe
+        run: pyinstaller watcher.spec --distpath dist --workpath build --noconfirm
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-exe
+          path: dist/CLIWatcher.exe
+
+  build-mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install deps
+        run: pip install -r requirements.txt pyinstaller
+
+      - name: Build app bundle
+        run: |
+          pyinstaller watcher.py \
+            --name CLIWatcher \
+            --onefile \
+            --windowed \
+            --hidden-import pystray._darwin \
+            --hidden-import PIL \
+            --hidden-import PIL.Image \
+            --hidden-import PIL.ImageDraw \
+            --noconfirm
+
+      - name: Create .pkg installer
+        run: |
+          APP="dist/CLIWatcher"
+          PKG_ROOT="pkg_root"
+
+          mkdir -p "$PKG_ROOT/usr/local/bin"
+          cp "$APP" "$PKG_ROOT/usr/local/bin/CLIWatcher"
+          chmod +x "$PKG_ROOT/usr/local/bin/CLIWatcher"
+
+          # LaunchAgent pra autostart
+          mkdir -p "$PKG_ROOT/Library/LaunchAgents"
+          cat > "$PKG_ROOT/Library/LaunchAgents/com.codando.watcher.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key>
+            <string>com.codando.watcher</string>
+            <key>ProgramArguments</key>
+            <array>
+              <string>/usr/local/bin/CLIWatcher</string>
+            </array>
+            <key>RunAtLoad</key>
+            <true/>
+            <key>KeepAlive</key>
+            <false/>
+          </dict>
+          </plist>
+          EOF
+
+          pkgbuild \
+            --root "$PKG_ROOT" \
+            --identifier com.codando.watcher \
+            --version "${GITHUB_REF_NAME}" \
+            --install-location / \
+            dist/CLIWatcher.pkg
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-pkg
+          path: dist/CLIWatcher.pkg
+
+  release:
+    needs: [build-windows, build-mac]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-exe
+          path: artifacts/windows
+
+      - name: Download Mac artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-pkg
+          path: artifacts/mac
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/windows/CLIWatcher.exe
+            artifacts/mac/CLIWatcher.pkg
+          body: |
+            ## Codando — ${{ github.ref_name }}
+
+            Mostra status divertido no Discord quando você usa Claude, VS Code, Codex e outros.
+
+            ### Download
+            | Plataforma | Arquivo |
+            |---|---|
+            | Windows 10/11 | `CLIWatcher.exe` — execute uma vez, se adiciona no boot automaticamente |
+            | macOS | `CLIWatcher.pkg` — instala e configura autostart via LaunchAgent |
+
+            ### Como usar
+            1. Baixe o arquivo da sua plataforma
+            2. Execute — aparece no system tray
+            3. Clique direito no ícone para Ativar/Desativar
+          generate_release_notes: false
