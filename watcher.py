@@ -243,7 +243,7 @@ def _update_tray_title():
     if state["tray"] is None:
         return
     status = "ON" if (state["enabled"] and state["active"]) else ("pausado" if not state["enabled"] else "aguardando")
-    state["tray"].title = f"CLI Watcher — {status}"
+    state["tray"].title = f"Codando — {status}"
 
 
 def log(msg):
@@ -302,7 +302,7 @@ def main():
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", tray_quit),
     )
-    tray = pystray.Icon("CLI Watcher", icon_img, "CLI Watcher — iniciando...", menu)
+    tray = pystray.Icon("Codando", icon_img, "Codando — iniciando...", menu)
     state["tray"] = tray
 
     log("Iniciando no system tray... (clique direito no ícone para controlar)")
