@@ -1,31 +1,84 @@
 """
 CLI Discord Rich Presence Watcher
-Detecta Claude, Codex e Antigravity CLI e exibe status divertido no Discord.
+Roda em background com ícone no system tray (Windows e Mac).
+Clique direito no tray → Ativar/Desativar, Sair.
 """
 
 import time
 import sys
 import os
 import random
+import threading
+import platform
+from datetime import datetime
 
 try:
     import psutil
 except ImportError:
-    print("Erro: psutil nao instalado. Execute: pip install -r requirements.txt")
+    print("Erro: pip install -r requirements.txt")
     sys.exit(1)
 
 try:
     from pypresence import Presence
 except ImportError:
-    print("Erro: pypresence nao instalado. Execute: pip install -r requirements.txt")
+    print("Erro: pip install -r requirements.txt")
+    sys.exit(1)
+
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+except ImportError:
+    print("Erro: pip install -r requirements.txt")
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Cole aqui o Client ID do seu app do Discord Developer Portal
+CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "1512275140661088417")
 # ---------------------------------------------------------------------------
-CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "YOUR_CLIENT_ID_HERE")
 
-# Mensagens de status que rotacionam a cada ciclo (details = linha de cima)
+WATCHED = {
+    # AI CLIs
+    "claude":           ("Claude Code",      "claude"),
+    "claude-cli":       ("Claude Code",      "claude"),
+    "claude-code":      ("Claude Code",      "claude"),
+    "codex":            ("OpenAI Codex",     "codex"),
+    "codex-cli":        ("OpenAI Codex",     "codex"),
+    "antigravity":      ("Antigravity",      "antigravity"),
+    "antigravity-cli":  ("Antigravity",      "antigravity"),
+    # Editores
+    "code":             ("VS Code",          "vscode"),
+    "cursor":           ("Cursor",           "cursor"),
+    "windsurf":         ("Windsurf",         "windsurf"),
+    "zed":              ("Zed",              "zed"),
+    "webstorm":         ("WebStorm",         "jetbrains"),
+    "pycharm":          ("PyCharm",          "jetbrains"),
+    "idea":             ("IntelliJ IDEA",    "jetbrains"),
+    "clion":            ("CLion",            "jetbrains"),
+    "goland":           ("GoLand",           "jetbrains"),
+    "rider":            ("Rider",            "jetbrains"),
+    "fleet":            ("Fleet",            "jetbrains"),
+    "sublime_text":     ("Sublime Text",     "sublime"),
+    "subl":             ("Sublime Text",     "sublime"),
+    "vim":              ("Vim",              "vim"),
+    "nvim":             ("Neovim",           "vim"),
+    "emacs":            ("Emacs",            "emacs"),
+    "atom":             ("Atom",             "atom"),
+    # Terminais
+    "wt":               ("Windows Terminal", "terminal"),
+    "alacritty":        ("Alacritty",        "terminal"),
+    "warp":             ("Warp",             "terminal"),
+    "iterm2":           ("iTerm2",           "terminal"),
+    "kitty":            ("Kitty",            "terminal"),
+    # Ferramentas
+    "docker":           ("Docker",           "docker"),
+    "postman":          ("Postman",          "postman"),
+    "insomnia":         ("Insomnia",         "postman"),
+    "tableplus":        ("TablePlus",        "database"),
+    "dbeaver":          ("DBeaver",          "database"),
+    "figma":            ("Figma",            "figma"),
+}
+
+CMD_KEYWORDS = {"claude", "codex", "antigravity"}
+
 FUNNY_DETAILS = [
     "Mandando o GPT pra terapia",
     "Deixando a IA fazer o trabalho",
@@ -35,174 +88,222 @@ FUNNY_DETAILS = [
     "Pedindo pro Claude me salvar",
     "Compilando... (mentira, eh Python)",
     "Vibe coding intenso",
-    "Promovendo a preguica intelectual",
-    "Conversando com robos desde cedo",
     "Ctrl+C Ctrl+V com estilo",
     "Stack Overflow? Nunca ouvi falar",
     "Produtivo (pelo menos eh o que parece)",
     "Fazendo o Claude fazer o dever de casa",
-    "Algoritmo? Deixa o modelo resolver",
-    "Fingindo que entende o output",
-    "Juntando tokens desde as 9h",
+    "Commit message: 'fix'",
+    "Mais um dia salvando o mundo com if/else",
+    "git commit -m 'arrumei tudo (mentira)'",
+    "Cafe na veia, bug na tela",
+    "Indo pra producao na forca bruta",
+    "A documentacao? Inventei ela",
+    "Testes? Minha fe eh meu teste",
+    "Funcionou na minha maquina",
+    "O prazo era ontem mas o codigo eh hoje",
+    "Deixa eu perguntar pro robozinho...",
+    "O codigo ta horrivel mas funciona",
     "Sem bugs (por enquanto)",
     "Quebrando prod em desenvolvimento",
-    "Desenvolvedor por fora, usuário de IA por dentro",
+    "Fingindo que entende o output",
+    "Juntando tokens desde as 9h",
+    "Desenvolvedor por fora, usuario de IA por dentro",
+    "Trabalhando duro (ou ficando duro de trabalhar)",
+    "Nao eh gambiarra, eh solucao criativa",
 ]
 
-# Frases de estado (state = linha de baixo)
 FUNNY_STATES = {
-    "claude":      [
-        "com Claude como co-piloto",
-        "deixando o Claude pensar",
-        "confiando cegamente no Claude",
-        "Claude disse que funciona, ta bom",
-    ],
-    "codex":       [
-        "com Codex no volante",
-        "deixando o Codex codar",
-        "o Codex escreve, eu aprovo",
-    ],
-    "antigravity": [
-        "desafiando a fisica",
-        "com Antigravity no comando",
-        "gravidade opcional",
-    ],
+    "claude":     ["com Claude no co-piloto", "deixando o Claude pensar", "confiando cegamente no Claude", "Claude disse q funciona, ok"],
+    "codex":      ["com Codex no volante", "o Codex escreve, eu aprovo", "deixando o Codex codar"],
+    "antigravity":["desafiando a fisica", "com Antigravity no comando", "gravidade: opcional"],
+    "vscode":     ["no VS Code", "com 47 extensoes instaladas", "cheio de abas abertas", "terminal integrado aberto"],
+    "cursor":     ["no Cursor", "deixando o Cursor completar", "autocomplete com esteroides"],
+    "windsurf":   ["no Windsurf", "surfando no codigo"],
+    "vim":        ["no Vim (sem saber sair)", "preso no Vim desde 2019", "modo: confuso"],
+    "jetbrains":  ["com RAM sofrendo", "indexando desde segunda-feira", "numa IDE da JetBrains"],
+    "sublime":    ["no Sublime Text", "editor leve na velocidade da luz"],
+    "terminal":   ["no terminal parecendo hacker", "digitando comandos aleatorios", "ls -la em loop"],
+    "docker":     ["construindo containers", "docker-compose up --pray", "reiniciando o Docker de novo"],
+    "postman":    ["testando APIs", "mandando requests no escuro", "esperando o 200 OK"],
+    "figma":      ["no Figma fingindo ser designer", "arrastando retangulos", "pixel perfect (quase)"],
+    "database":   ["mexendo no banco de dados", "DELETE sem WHERE (quase)", "SELECT * FROM problemas"],
+    "emacs":      ["no Emacs (sistema operacional disfarcado)", "configurando o Emacs ha 3 horas"],
+    "zed":        ["no Zed", "editor rapido pra dev lento"],
+    "atom":       ["no Atom (descanse em paz)", "usando o Atom em 2025, respeito"],
 }
 
-WATCHED_PROCESS_NAMES = {
-    "claude", "claude-cli", "claude-code",
-    "codex", "codex-cli",
-    "antigravity", "antigravity-cli",
-}
-
-WATCHED_CMD_KEYWORDS = {
-    "claude", "codex", "antigravity",
-}
-
-LABEL_MAP = {
-    "claude":          ("Claude Code",   "claude"),
-    "claude-cli":      ("Claude Code",   "claude"),
-    "claude-code":     ("Claude Code",   "claude"),
-    "codex":           ("OpenAI Codex",  "codex"),
-    "codex-cli":       ("OpenAI Codex",  "codex"),
-    "antigravity":     ("Antigravity",   "antigravity"),
-    "antigravity-cli": ("Antigravity",   "antigravity"),
-}
-
-# Troca a mensagem de details a cada N segundos
 ROTATE_INTERVAL = 30
 POLL_INTERVAL   = 5
 
 
-def detect_active_cli():
+# ---------------------------------------------------------------------------
+# Estado global
+# ---------------------------------------------------------------------------
+state = {
+    "enabled":     True,
+    "rpc":         None,
+    "active":      False,
+    "start_time":  None,
+    "last_rotate": 0,
+    "cur_details": "",
+    "cur_key":     None,
+    "tray":        None,
+}
+
+
+def detect_active():
     for proc in psutil.process_iter(["name", "cmdline"]):
         try:
-            name    = (proc.info["name"] or "").lower().removesuffix(".exe")
+            raw     = (proc.info["name"] or "").lower().removesuffix(".exe")
             cmdline = " ".join(proc.info["cmdline"] or []).lower()
-
-            if name in WATCHED_PROCESS_NAMES:
-                return name, LABEL_MAP.get(name, (name, "code"))
-
-            for keyword in WATCHED_CMD_KEYWORDS:
-                if keyword in cmdline:
-                    return keyword, LABEL_MAP.get(keyword, (keyword, "code"))
-
+            if raw in WATCHED:
+                friendly, key = WATCHED[raw]
+                return raw, friendly, key
+            for kw in CMD_KEYWORDS:
+                if kw in cmdline:
+                    entry = WATCHED.get(kw)
+                    if entry:
+                        return kw, entry[0], entry[1]
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
+    return None, None, None
 
-    return None, None
+
+def _update_rpc(details, key, friendly, start):
+    states = FUNNY_STATES.get(key, [f"usando {friendly}"])
+    try:
+        state["rpc"].update(
+            details    = details,
+            state      = random.choice(states),
+            start      = start,
+            large_image= "https://i.imgur.com/wSTFkRM.png",
+            large_text = friendly,
+        )
+    except Exception:
+        pass
 
 
-def pick_state(tool_key):
-    pool = FUNNY_STATES.get(tool_key, [f"usando {tool_key}"])
-    return random.choice(pool)
+def watcher_loop():
+    rpc = Presence(CLIENT_ID)
+    try:
+        rpc.connect()
+        state["rpc"] = rpc
+        log("Conectado ao Discord.")
+    except Exception as e:
+        log(f"Nao conectou ao Discord: {e}")
+        return
+
+    state["cur_details"] = random.choice(FUNNY_DETAILS)
+
+    while True:
+        time.sleep(POLL_INTERVAL)
+
+        if not state["enabled"]:
+            if state["active"]:
+                try:
+                    rpc.clear()
+                except Exception:
+                    pass
+                state["active"] = False
+                log("RPC pausado (desativado pelo tray)")
+            _update_tray_title()
+            continue
+
+        proc_name, friendly, key = detect_active()
+        now = time.time()
+
+        if proc_name and not state["active"]:
+            state["start_time"]  = int(now)
+            state["last_rotate"] = now
+            state["cur_details"] = random.choice(FUNNY_DETAILS)
+            state["cur_key"]     = key
+            _update_rpc(state["cur_details"], key, friendly, state["start_time"])
+            state["active"] = True
+            log(f"ON  {friendly} | {state['cur_details']}")
+
+        elif proc_name and state["active"] and (now - state["last_rotate"]) >= ROTATE_INTERVAL:
+            state["cur_details"] = random.choice(FUNNY_DETAILS)
+            state["last_rotate"] = now
+            _update_rpc(state["cur_details"], state["cur_key"], friendly, state["start_time"])
+            log(f"--> {state['cur_details']}")
+
+        elif not proc_name and state["active"]:
+            try:
+                rpc.clear()
+            except Exception:
+                pass
+            state["active"] = False
+            log("OFF")
+
+        _update_tray_title()
+
+
+def _update_tray_title():
+    if state["tray"] is None:
+        return
+    status = "ON" if (state["enabled"] and state["active"]) else ("pausado" if not state["enabled"] else "aguardando")
+    state["tray"].title = f"CLI Watcher — {status}"
+
+
+def log(msg):
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+
+# ---------------------------------------------------------------------------
+# Tray
+# ---------------------------------------------------------------------------
+
+def make_icon():
+    """Gera um ícone simples (círculo colorido) sem arquivo externo."""
+    size = 64
+    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+    draw.ellipse([4, 4, size - 4, size - 4], fill="#5865F2")  # roxo Discord
+    draw.ellipse([20, 20, size - 20, size - 20], fill="white")
+    return img
+
+
+def tray_toggle(icon, item):
+    state["enabled"] = not state["enabled"]
+    status = "ativado" if state["enabled"] else "desativado"
+    log(f"Rich Presence {status} pelo tray")
+    _update_tray_title()
+    icon.update_menu()
+
+
+def tray_quit(icon, item):
+    log("Saindo...")
+    if state["active"] and state["rpc"]:
+        try:
+            state["rpc"].clear()
+            state["rpc"].close()
+        except Exception:
+            pass
+    icon.stop()
+    os._exit(0)
+
+
+def toggle_label(item):
+    return "Desativar" if state["enabled"] else "Ativar"
 
 
 def main():
-    if CLIENT_ID == "YOUR_CLIENT_ID_HERE":
-        print(
-            "Cole seu CLIENT_ID no watcher.py (linha 16)\n"
-            "ou exporte: DISCORD_CLIENT_ID=<id>\n"
-            "Crie o app em: https://discord.com/developers/applications\n"
-        )
-        sys.exit(1)
+    # Inicia o watcher em thread separada
+    t = threading.Thread(target=watcher_loop, daemon=True)
+    t.start()
 
-    print("CLI Discord RPC - iniciando...")
-    rpc = Presence(CLIENT_ID)
+    # Cria o ícone do tray
+    icon_img = make_icon()
+    menu = pystray.Menu(
+        pystray.MenuItem(toggle_label, tray_toggle, default=True),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Sair", tray_quit),
+    )
+    tray = pystray.Icon("CLI Watcher", icon_img, "CLI Watcher — iniciando...", menu)
+    state["tray"] = tray
 
-    try:
-        rpc.connect()
-        print("Conectado ao Discord.")
-    except Exception as e:
-        print(f"Nao foi possivel conectar ao Discord: {e}")
-        print("  Verifique se o Discord esta aberto.")
-        sys.exit(1)
-
-    active          = False
-    start_time      = None
-    last_rotate     = 0
-    current_details = random.choice(FUNNY_DETAILS)
-    current_tool    = None
-
-    print(f"Monitorando: {', '.join(sorted(WATCHED_PROCESS_NAMES))}")
-    print("Pressione Ctrl+C para encerrar.\n")
-
-    try:
-        while True:
-            tool_name, label_tuple = detect_active_cli()
-            friendly  = label_tuple[0] if label_tuple else None
-            tool_key  = tool_name or "claude"
-            now       = time.time()
-
-            should_rotate = (now - last_rotate) >= ROTATE_INTERVAL
-
-            if tool_name and not active:
-                start_time      = int(now)
-                last_rotate     = now
-                current_details = random.choice(FUNNY_DETAILS)
-                current_tool    = tool_key
-                rpc.update(
-                    details   = current_details,
-                    state     = pick_state(tool_key),
-                    start     = start_time,
-                    large_image = "https://i.imgur.com/wSTFkRM.png",
-                    large_text  = friendly,
-                )
-                active = True
-                print(f"[{_now()}] Ativo — {friendly} | {current_details}")
-
-            elif tool_name and active and should_rotate:
-                current_details = random.choice(FUNNY_DETAILS)
-                last_rotate     = now
-                rpc.update(
-                    details   = current_details,
-                    state     = pick_state(current_tool),
-                    start     = start_time,
-                    large_image = "https://i.imgur.com/wSTFkRM.png",
-                    large_text  = friendly,
-                )
-                print(f"[{_now()}] Status: {current_details}")
-
-            elif not tool_name and active:
-                rpc.clear()
-                active      = False
-                start_time  = None
-                current_tool = None
-                print(f"[{_now()}] Desativado")
-
-            time.sleep(POLL_INTERVAL)
-
-    except KeyboardInterrupt:
-        print("\nEncerrando...")
-    finally:
-        if active:
-            rpc.clear()
-        rpc.close()
-
-
-def _now():
-    from datetime import datetime
-    return datetime.now().strftime("%H:%M:%S")
+    log("Iniciando no system tray... (clique direito no ícone para controlar)")
+    tray.run()  # bloqueia até sair
 
 
 if __name__ == "__main__":

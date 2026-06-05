@@ -1,4 +1,3 @@
 @echo off
-:: Opcional: set DISCORD_CLIENT_ID=123456789012345678
-python watcher.py
-pause
+:: Inicia o CLI Watcher em background (sem janela de terminal)
+pythonw watcher.py
