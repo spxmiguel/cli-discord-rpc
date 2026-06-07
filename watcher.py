@@ -316,7 +316,19 @@ def set_autostart(enable=True):
     try:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
         if enable:
-            exe_path = sys.executable if getattr(sys, "frozen", False) else f'"{sys.executable}" "{os.path.abspath(__file__)}"'
+            if getattr(sys, "frozen", False):
+                # Copia pra AppData se necessário e usa esse caminho
+                appdata = os.environ.get("APPDATA", os.path.expanduser("~"))
+                install_dir = os.path.join(appdata, "CLIWatcher")
+                install_exe = os.path.join(install_dir, "CLIWatcher.exe")
+                os.makedirs(install_dir, exist_ok=True)
+                src = sys.executable
+                if os.path.abspath(src).lower() != os.path.abspath(install_exe).lower():
+                    import shutil
+                    shutil.copy2(src, install_exe)
+                exe_path = f'"{install_exe}"'
+            else:
+                exe_path = f'"{sys.executable}" "{os.path.abspath(__file__)}"'
             winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, exe_path)
         else:
             try:
